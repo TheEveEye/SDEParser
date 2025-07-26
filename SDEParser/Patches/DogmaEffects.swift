@@ -29,23 +29,35 @@ let effectOperationNameToId: [String: Int] = [
 func fixupModifierInfo(_ modifier: inout [String: Any], data: [String: Any]) throws {
 
     // Resolve modifiedAttribute -> modifiedAttributeID
-    if let name = modifier["modifiedAttribute"] as? String,
-       let dogmaAttrs = data["dogmaAttributes"] as? [Int: [String: Any]] {
-        if let id = dogmaAttrs.first(where: { $0.value["name"] as? String == name })?.key {
-            modifier["modifiedAttributeID"] = id
-            modifier.removeValue(forKey: "modifiedAttribute")
+    if let name = modifier["modifiedAttribute"] as? String {
+        if let dogmaAttrs = data["dogmaAttributes"] as? [String: Any] {
+            // Find attribute by name in YAML data structure (keys are strings)
+            if let (idStr, attrData) = dogmaAttrs.first(where: { _, value in
+                (value as? [String: Any])?["name"] as? String == name
+            }), let id = Int(idStr) {
+                modifier["modifiedAttributeID"] = id
+                modifier.removeValue(forKey: "modifiedAttribute")
+            } else {
+                throw DogmaEffectsPatchError.unknownAttribute(name)
+            }
         } else {
-            throw DogmaEffectsPatchError.unknownAttribute(name)
+            throw DogmaEffectsPatchError.unknownAttribute("No dogmaAttributes in data while resolving: \(name)")
         }
     }
     // Resolve modifyingAttribute -> modifyingAttributeID
-    if let name = modifier["modifyingAttribute"] as? String,
-       let dogmaAttrs = data["dogmaAttributes"] as? [Int: [String: Any]] {
-        if let id = dogmaAttrs.first(where: { $0.value["name"] as? String == name })?.key {
-            modifier["modifyingAttributeID"] = id
-            modifier.removeValue(forKey: "modifyingAttribute")
+    if let name = modifier["modifyingAttribute"] as? String {
+        if let dogmaAttrs = data["dogmaAttributes"] as? [String: Any] {
+            // Find attribute by name in YAML data structure (keys are strings)
+            if let (idStr, attrData) = dogmaAttrs.first(where: { _, value in
+                (value as? [String: Any])?["name"] as? String == name
+            }), let id = Int(idStr) {
+                modifier["modifyingAttributeID"] = id
+                modifier.removeValue(forKey: "modifyingAttribute")
+            } else {
+                throw DogmaEffectsPatchError.unknownAttribute(name)
+            }
         } else {
-            throw DogmaEffectsPatchError.unknownAttribute(name)
+            throw DogmaEffectsPatchError.unknownAttribute("No dogmaAttributes in data while resolving: \(name)")
         }
     }
     // Resolve skillType -> skillTypeID
@@ -53,13 +65,17 @@ func fixupModifierInfo(_ modifier: inout [String: Any], data: [String: Any]) thr
         if skill == "IfSkillRequired" {
             modifier["skillTypeID"] = -1
         } else {
-            guard let types = data["types"] as? [Int: [String: Any]] else {
-                throw DogmaEffectsPatchError.unknownSkill("No types dictionary in data while resolving skill: \(skill)")
-            }
-            if let id = types.first(where: { $0.value["name"] as? String == skill })?.key {
-                modifier["skillTypeID"] = id
+            if let types = data["types"] as? [String: Any] {
+                // Find type by name in YAML data structure (keys are strings)
+                if let (idStr, typeData) = types.first(where: { _, value in
+                    (value as? [String: Any])?["name"] as? String == skill
+                }), let id = Int(idStr) {
+                    modifier["skillTypeID"] = id
+                } else {
+                    throw DogmaEffectsPatchError.unknownSkill(skill)
+                }
             } else {
-                throw DogmaEffectsPatchError.unknownSkill(skill)
+                throw DogmaEffectsPatchError.unknownSkill("No types dictionary in data while resolving skill: \(skill)")
             }
         }
         modifier.removeValue(forKey: "skillType")
@@ -75,7 +91,7 @@ func fixupModifierInfo(_ modifier: inout [String: Any], data: [String: Any]) thr
 /// - Parameters:
 ///   - entries: A mapping from effect IDs to entry dictionaries.
 ///   - patches: An array of patch dictionaries.
-///   - data: The full data context (e.g., includes "dogmaAttributes" and "types").
+///   - data: The full YAML data context (includes "dogmaAttributes", "types", etc. with string keys).
 /// - Throws: Various errors if lookups fail or effect names collide.
 func applyDogmaEffectPatches(
     to entries: inout [Int: [String: Any]],

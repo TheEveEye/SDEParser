@@ -110,7 +110,8 @@ func processYAMLFiles(in directory: URL) {
                     }))
                     do {
                         if let effPatches = patches["effects"] as? [[String: Any]] {
-                            try applyDogmaEffectPatches(to: &entries, using: effPatches, data: ["dogmaEffects": dict])
+                            // Pass complete YAML data context for cross-references
+                            try applyDogmaEffectPatches(to: &entries, using: effPatches, data: allYamlData)
                             print("✅ Successfully applied effect patches for \(baseName)")
                         }
                         finalData = Dictionary(uniqueKeysWithValues: entries.map { (k, v) in ("\(k)", v) })
