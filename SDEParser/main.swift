@@ -60,7 +60,6 @@ func processYAMLFiles(in directory: URL) {
 
     // Load all YAML data first for cross-references
     var allYamlData: [String: Any] = [:]
-    print("🔄 Loading all YAML files for cross-references...")
     
     for fileURL in yamlFiles {
         let baseName = fileURL.deletingPathExtension().lastPathComponent
@@ -68,7 +67,6 @@ func processYAMLFiles(in directory: URL) {
             let yamlString = try String(contentsOf: fileURL, encoding: .utf8)
             if let yamlData = try Yams.load(yaml: yamlString) {
                 allYamlData[baseName] = yamlData
-                print("📋 Pre-loaded \(baseName).yaml")
             }
         } catch {
             print("⚠️ Failed to pre-load \(baseName).yaml: \(error)")
@@ -79,10 +77,123 @@ func processYAMLFiles(in directory: URL) {
     var completedFiles = 0
     let progressQueue = DispatchQueue(label: "progress.queue")
 
+    // Separate dogma files that need sequential processing
+    let dogmaFiles = ["dogmaAttributes", "dogmaEffects", "typeDogma"]
+    let dogmaFileUrls = yamlFiles.filter { url in
+        dogmaFiles.contains(url.deletingPathExtension().lastPathComponent)
+    }.sorted { url1, url2 in
+        let name1 = url1.deletingPathExtension().lastPathComponent
+        let name2 = url2.deletingPathExtension().lastPathComponent
+        // Ensure correct order: attributes -> effects -> typeDogma
+        let order = ["dogmaAttributes": 0, "dogmaEffects": 1, "typeDogma": 2]
+        return (order[name1] ?? 999) < (order[name2] ?? 999)
+    }
+    let otherFiles = yamlFiles.filter { url in
+        !dogmaFiles.contains(url.deletingPathExtension().lastPathComponent)
+    }
+
+    // Process dogma files sequentially first
+    for fileURL in dogmaFileUrls {
+        let baseName = fileURL.deletingPathExtension().lastPathComponent
+        
+        do {
+            guard var finalData = allYamlData[baseName] else {
+                print("⚠️ Skipping: No pre-loaded data for \(baseName)")
+                continue
+            }
+
+            // Apply patches for dogma sections
+            if baseName == "dogmaAttributes",
+               var dict = finalData as? [String: Any] {
+                var entries: [Int: [String: Any]] = Dictionary(uniqueKeysWithValues: dict.compactMap({ key, value in
+                    guard let intKey = Int(key), let v = value as? [String: Any] else { return nil }
+                    return (intKey, v)
+                }))
+                do {
+                    if let attrPatches = patches["attributes"] as? [[String: Any]] {
+                        try applyDogmaAttributePatches(to: &entries, using: attrPatches)
+                    }
+                    finalData = Dictionary(uniqueKeysWithValues: entries.map { (k, v) in ("\(k)", v) })
+                    // Update allYamlData with patched data for cross-references
+                    allYamlData[baseName] = finalData
+                } catch {
+                    print("⚠️ Error applying attribute patches: \(error)")
+                }
+            } else if baseName == "dogmaEffects",
+                      var dict = finalData as? [String: Any] {
+                var entries: [Int: [String: Any]] = Dictionary(uniqueKeysWithValues: dict.compactMap({ key, value in
+                    guard let intKey = Int(key), let v = value as? [String: Any] else { return nil }
+                    return (intKey, v)
+                }))
+                do {
+                    if let effPatches = patches["effects"] as? [[String: Any]] {
+                        // Pass complete YAML data context for cross-references
+                        try applyDogmaEffectPatches(to: &entries, using: effPatches, data: allYamlData)
+                    }
+                    finalData = Dictionary(uniqueKeysWithValues: entries.map { (k, v) in ("\(k)", v) })
+                    // Update allYamlData with patched data for cross-references
+                    allYamlData[baseName] = finalData
+                } catch {
+                    print("⚠️ Error applying effect patches: \(error)")
+                }
+            } else if baseName == "typeDogma",
+                      var dict = finalData as? [String: Any] {
+                var entries: [Int: [String: Any]] = Dictionary(uniqueKeysWithValues: dict.compactMap({ key, value in
+                    guard let intKey = Int(key), let v = value as? [String: Any] else { return nil }
+                    return (intKey, v)
+                }))
+                do {
+                    if let tdPatches = patches["typeDogma"] as? [[String: Any]] {
+                        // Pass complete YAML data context for cross-references
+                        try applyTypeDogmaPatches(to: &entries, using: tdPatches, data: allYamlData)
+                    }
+                    finalData = Dictionary(uniqueKeysWithValues: entries.map { (k, v) in ("\(k)", v) })
+                    // Update allYamlData with patched data for cross-references
+                    allYamlData[baseName] = finalData
+                } catch {
+                    print("⚠️ Error applying typeDogma patches: \(error)")
+                }
+            }
+
+            // Sort by numeric key if applicable
+            if let dict = finalData as? [String: Any],
+               dict.keys.allSatisfy({ Int($0) != nil }) {
+                let sortedDict = dict
+                    .compactMap { (key, value) -> (Int, Any)? in
+                        guard let intKey = Int(key) else { return nil }
+                        return (intKey, value)
+                    }
+                    .sorted(by: { $0.0 < $1.0 })
+
+                finalData = Dictionary(uniqueKeysWithValues: sortedDict.map { (key, value) in ("\(key)", value) })
+            }
+
+            // Write JSON file
+            let relativePath = fileURL.path.replacingOccurrences(of: resourcesRoot.path, with: "")
+            let jsonDestinationRoot = resourcesRoot.appendingPathComponent("sde-json")
+            let jsonURL = jsonDestinationRoot.appendingPathComponent(relativePath)
+                .deletingPathExtension()
+                .appendingPathExtension("json")
+
+            try fileManager.createDirectory(at: jsonURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+            let jsonData = try JSONSerialization.data(withJSONObject: finalData, options: [.prettyPrinted])
+            try jsonData.write(to: jsonURL)
+            
+            completedFiles += 1
+            print("📦 \(completedFiles)/\(totalFiles) | Converted \(fileURL.lastPathComponent) → \(jsonURL.lastPathComponent)")
+        } catch {
+            print("❌ Error processing \(fileURL.path): \(error)")
+        }
+    }
+    
+    print("🏁 Completed sequential processing of dogma files")
+
+    // Process other files in parallel
     let group = DispatchGroup()
     let queue = DispatchQueue(label: "yaml.processing.queue", attributes: .concurrent)
 
-    for fileURL in yamlFiles {
+    for fileURL in otherFiles {
         group.enter()
         queue.async {
             defer {
@@ -100,56 +211,7 @@ func processYAMLFiles(in directory: URL) {
                     return
                 }
 
-                // Apply patches for dogma sections
-                if baseName == "dogmaAttributes",
-                   var dict = finalData as? [String: Any] {
-                    var entries: [Int: [String: Any]] = Dictionary(uniqueKeysWithValues: dict.compactMap({ key, value in
-                        guard let intKey = Int(key), let v = value as? [String: Any] else { return nil }
-                        return (intKey, v)
-                    }))
-                    do {
-                        if let attrPatches = patches["attributes"] as? [[String: Any]] {
-                            try applyDogmaAttributePatches(to: &entries, using: attrPatches)
-                            print("✅ Successfully applied attribute patches for \(baseName)")
-                        }
-                        finalData = Dictionary(uniqueKeysWithValues: entries.map { (k, v) in ("\(k)", v) })
-                    } catch {
-                        print("⚠️ Error applying attribute patches: \(error)")
-                    }
-                } else if baseName == "dogmaEffects",
-                          var dict = finalData as? [String: Any] {
-                    var entries: [Int: [String: Any]] = Dictionary(uniqueKeysWithValues: dict.compactMap({ key, value in
-                        guard let intKey = Int(key), let v = value as? [String: Any] else { return nil }
-                        return (intKey, v)
-                    }))
-                    do {
-                        if let effPatches = patches["effects"] as? [[String: Any]] {
-                            // Pass complete YAML data context for cross-references
-                            try applyDogmaEffectPatches(to: &entries, using: effPatches, data: allYamlData)
-                            print("✅ Successfully applied effect patches for \(baseName)")
-                        }
-                        finalData = Dictionary(uniqueKeysWithValues: entries.map { (k, v) in ("\(k)", v) })
-                    } catch {
-                        print("⚠️ Error applying effect patches: \(error)")
-                    }
-                } else if baseName == "typeDogma",
-                          var dict = finalData as? [String: Any] {
-                    var entries: [Int: [String: Any]] = Dictionary(uniqueKeysWithValues: dict.compactMap({ key, value in
-                        guard let intKey = Int(key), let v = value as? [String: Any] else { return nil }
-                        return (intKey, v)
-                    }))
-                    do {
-                        if let tdPatches = patches["typeDogma"] as? [[String: Any]] {
-                            // Pass complete YAML data context for cross-references
-                            try applyTypeDogmaPatches(to: &entries, using: tdPatches, data: allYamlData)
-                            print("✅ Successfully applied typeDogma patches for \(baseName)")
-                        }
-                        finalData = Dictionary(uniqueKeysWithValues: entries.map { (k, v) in ("\(k)", v) })
-                    } catch {
-                        print("⚠️ Error applying typeDogma patches: \(error)")
-                    }
-                }
-
+                // Sort by numeric key if applicable
                 if let dict = allYamlData[baseName] as? [String: Any],
                    dict.keys.allSatisfy({ Int($0) != nil }) {
                     let sortedDict = dict
@@ -172,7 +234,6 @@ func processYAMLFiles(in directory: URL) {
 
                 let jsonData = try JSONSerialization.data(withJSONObject: finalData, options: [.prettyPrinted])
                 try jsonData.write(to: jsonURL)
-                // print("✅ Converted \(fileURL.lastPathComponent) → \(jsonURL.lastPathComponent)")
             } catch {
                 print("❌ Error processing \(fileURL.path): \(error)")
             }
@@ -180,6 +241,7 @@ func processYAMLFiles(in directory: URL) {
     }
 
     group.wait()
+    print("🏁 All processing completed!")
     let elapsedTime = Date().timeIntervalSince(startTime)
     print(String(format: "⏱ Time elapsed: %.2f seconds", elapsedTime))
 }

@@ -16,43 +16,61 @@ enum TypeDogmaPatchError: Error {
 
 /// Fixes up an attribute entry, resolving name to attributeID.
 func fixupAttribute(_ attribute: inout [String: Any], data: [String: Any]) throws {
-    if let name = attribute["attribute"] as? String {
-        if let dogmaAttrs = data["dogmaAttributes"] as? [String: Any] {
-            // Find attribute by name in YAML data structure (keys are strings)
-            if let (idStr, attrData) = dogmaAttrs.first(where: { _, value in
-                (value as? [String: Any])?["name"] as? String == name
-            }), let id = Int(idStr) {
-                attribute["attributeID"] = id
-                attribute.removeValue(forKey: "attribute")
-            } else {
-                throw TypeDogmaPatchError.unknownAttribute(name)
-            }
+    // Handle both "name" and "attribute" fields for attribute name
+    let name: String
+    if let attrName = attribute["attribute"] as? String {
+        name = attrName
+    } else if let attrName = attribute["name"] as? String {
+        name = attrName
+        // Convert "name" to "attribute" for processing
+        attribute["attribute"] = attrName
+        attribute.removeValue(forKey: "name")
+    } else {
+        throw TypeDogmaPatchError.unknownAttribute("")
+    }
+    
+    if let dogmaAttrs = data["dogmaAttributes"] as? [String: Any] {
+        // Find attribute by name in YAML data structure (keys are strings)
+        if let (idStr, attrData) = dogmaAttrs.first(where: { _, value in
+            (value as? [String: Any])?["name"] as? String == name
+        }), let id = Int(idStr) {
+            attribute["attributeID"] = id
+            attribute.removeValue(forKey: "attribute")
         } else {
             throw TypeDogmaPatchError.unknownAttribute(name)
         }
     } else {
-        throw TypeDogmaPatchError.unknownAttribute(attribute["attribute"] as? String ?? "")
+        throw TypeDogmaPatchError.unknownAttribute(name)
     }
 }
 
 /// Fixes up an effect entry, resolving name to effectID.
 func fixupEffect(_ effect: inout [String: Any], data: [String: Any]) throws {
-    if let name = effect["effect"] as? String {
-        if let dogmaEffs = data["dogmaEffects"] as? [String: Any] {
-            // Find effect by name in YAML data structure (keys are strings)
-            if let (idStr, effData) = dogmaEffs.first(where: { _, value in
-                (value as? [String: Any])?["effectName"] as? String == name
-            }), let id = Int(idStr) {
-                effect["effectID"] = id
-                effect.removeValue(forKey: "effect")
-            } else {
-                throw TypeDogmaPatchError.unknownEffect(name)
-            }
+    // Handle both "name" and "effect" fields for effect name
+    let name: String
+    if let effName = effect["effect"] as? String {
+        name = effName
+    } else if let effName = effect["name"] as? String {
+        name = effName
+        // Convert "name" to "effect" for processing
+        effect["effect"] = effName
+        effect.removeValue(forKey: "name")
+    } else {
+        throw TypeDogmaPatchError.unknownEffect("")
+    }
+    
+    if let dogmaEffs = data["dogmaEffects"] as? [String: Any] {
+        // Find effect by name in YAML data structure (keys are strings)
+        if let (idStr, effData) = dogmaEffs.first(where: { _, value in
+            (value as? [String: Any])?["effectName"] as? String == name
+        }), let id = Int(idStr) {
+            effect["effectID"] = id
+            effect.removeValue(forKey: "effect")
         } else {
             throw TypeDogmaPatchError.unknownEffect(name)
         }
     } else {
-        throw TypeDogmaPatchError.unknownEffect(effect["effect"] as? String ?? "")
+        throw TypeDogmaPatchError.unknownEffect(name)
     }
 }
 
@@ -90,12 +108,29 @@ func applyTypeDogmaPatches(
                 if let categoryName = target["category"] as? String {
                     // Handle YAML data structure with string keys
                     if let categories = data["categories"] as? [String: Any],
-                       let categoryEntry = categories.first(where: { _, value in
-                           (value as? [String: Any])?["name"] as? String == categoryName
-                       }),
-                       let categoryID = Int(categoryEntry.key),
                        let groups = data["groups"] as? [String: Any],
                        let types = data["types"] as? [String: Any] {
+                        
+                        // Find category by name, checking both direct name and name.en fields
+                        let categoryEntry = categories.first(where: { _, value in
+                            guard let categoryInfo = value as? [String: Any] else { return false }
+                            // Check direct name field
+                            if let name = categoryInfo["name"] as? String, name == categoryName {
+                                return true
+                            }
+                            // Check name.en field structure
+                            if let nameDict = categoryInfo["name"] as? [String: Any],
+                               let enName = nameDict["en"] as? String, enName == categoryName {
+                                return true
+                            }
+                            return false
+                        })
+                        
+                        guard let categoryEntry = categoryEntry,
+                              let categoryID = Int(categoryEntry.key) else {
+                            throw TypeDogmaPatchError.unknownCategory(categoryName)
+                        }
+                        
                         // category filter
                         let groupIDs = groups.compactMap { (key, value) -> Int? in
                             guard let groupData = value as? [String: Any],
@@ -117,9 +152,16 @@ func applyTypeDogmaPatches(
                     // type filter with YAML data structure
                     if let types = data["types"] as? [String: Any] {
                         typeIDs = types.compactMap { (key, value) -> Int? in
-                            guard let typeData = value as? [String: Any],
-                                  typeData["name"] as? String == typeName,
-                                  let typeID = Int(key) else { return nil }
+                            guard let typeData = value as? [String: Any] else { return nil }
+                            // Check both direct name field and name.en field
+                            var nameMatches = false
+                            if let name = typeData["name"] as? String, name == typeName {
+                                nameMatches = true
+                            } else if let nameDict = typeData["name"] as? [String: Any],
+                                      let enName = nameDict["en"] as? String, enName == typeName {
+                                nameMatches = true
+                            }
+                            guard nameMatches, let typeID = Int(key) else { return nil }
                             return typeID
                         }
                     } else {

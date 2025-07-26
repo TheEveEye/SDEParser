@@ -67,8 +67,19 @@ func fixupModifierInfo(_ modifier: inout [String: Any], data: [String: Any]) thr
         } else {
             if let types = data["types"] as? [String: Any] {
                 // Find type by name in YAML data structure (keys are strings)
+                // Check both direct name field and name.en field
                 if let (idStr, typeData) = types.first(where: { _, value in
-                    (value as? [String: Any])?["name"] as? String == skill
+                    guard let typeInfo = value as? [String: Any] else { return false }
+                    // Check direct name field
+                    if let name = typeInfo["name"] as? String, name == skill {
+                        return true
+                    }
+                    // Check name.en field structure
+                    if let nameDict = typeInfo["name"] as? [String: Any],
+                       let enName = nameDict["en"] as? String, enName == skill {
+                        return true
+                    }
+                    return false
                 }), let id = Int(idStr) {
                     modifier["skillTypeID"] = id
                 } else {
