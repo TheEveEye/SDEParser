@@ -1,0 +1,54 @@
+// Xcode
+.DS_Store
+build/
+DerivedData/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+
+// SwiftPM
+.swiftpm/xcode/package.xcworkspace/
+.build/
+
+// CocoaPods
+Pods/
+
+// Carthage
+Carthage/Build/
+
+// fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output/
+
+// Xcode Patch
+*.xcodeproj/*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+// Playground
+timeline.xctimeline
+playground.xcworkspace
+
+// App data
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.app
+
+// Additional
+*.swp
+*.swo
+*.tmp
+*.orig
+.idea/
+*.xcscmblueprint
+
+SDEParser/Resources/sde/*
+SDEParser/Resources/sde-json/*
