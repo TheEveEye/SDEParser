@@ -16,11 +16,20 @@ enum TypeDogmaPatchError: Error {
 
 /// Fixes up an attribute entry, resolving name to attributeID.
 func fixupAttribute(_ attribute: inout [String: Any], data: [String: Any]) throws {
-    if let name = attribute["attribute"] as? String,
-       let dogmaAttrs = data["dogmaAttributes"] as? [Int: [String: Any]],
-       let id = dogmaAttrs.first(where: { $0.value["name"] as? String == name })?.key {
-        attribute["attributeID"] = id
-        attribute.removeValue(forKey: "attribute")
+    if let name = attribute["attribute"] as? String {
+        if let dogmaAttrs = data["dogmaAttributes"] as? [String: Any] {
+            // Find attribute by name in YAML data structure (keys are strings)
+            if let (idStr, attrData) = dogmaAttrs.first(where: { _, value in
+                (value as? [String: Any])?["name"] as? String == name
+            }), let id = Int(idStr) {
+                attribute["attributeID"] = id
+                attribute.removeValue(forKey: "attribute")
+            } else {
+                throw TypeDogmaPatchError.unknownAttribute(name)
+            }
+        } else {
+            throw TypeDogmaPatchError.unknownAttribute(name)
+        }
     } else {
         throw TypeDogmaPatchError.unknownAttribute(attribute["attribute"] as? String ?? "")
     }
@@ -28,11 +37,20 @@ func fixupAttribute(_ attribute: inout [String: Any], data: [String: Any]) throw
 
 /// Fixes up an effect entry, resolving name to effectID.
 func fixupEffect(_ effect: inout [String: Any], data: [String: Any]) throws {
-    if let name = effect["effect"] as? String,
-       let dogmaEffs = data["dogmaEffects"] as? [Int: [String: Any]],
-       let id = dogmaEffs.first(where: { $0.value["effectName"] as? String == name })?.key {
-        effect["effectID"] = id
-        effect.removeValue(forKey: "effect")
+    if let name = effect["effect"] as? String {
+        if let dogmaEffs = data["dogmaEffects"] as? [String: Any] {
+            // Find effect by name in YAML data structure (keys are strings)
+            if let (idStr, effData) = dogmaEffs.first(where: { _, value in
+                (value as? [String: Any])?["effectName"] as? String == name
+            }), let id = Int(idStr) {
+                effect["effectID"] = id
+                effect.removeValue(forKey: "effect")
+            } else {
+                throw TypeDogmaPatchError.unknownEffect(name)
+            }
+        } else {
+            throw TypeDogmaPatchError.unknownEffect(name)
+        }
     } else {
         throw TypeDogmaPatchError.unknownEffect(effect["effect"] as? String ?? "")
     }
@@ -69,18 +87,44 @@ func applyTypeDogmaPatches(
         if let targets = patch["patch"] as? [[String: Any]] {
             for target in targets {
                 var typeIDs: [Int] = []
-                if let categoryName = target["category"] as? String,
-                   let categories = data["categories"] as? [Int: [String: Any]],
-                   let categoryID = categories.first(where: { $0.value["name"] as? String == categoryName })?.key,
-                   let groups = data["groups"] as? [Int: [String: Any]],
-                   let types = data["types"] as? [Int: [String: Any]] {
-                    // category filter
-                    let groupIDs = groups.filter { $0.value["categoryID"] as? Int == categoryID }.map { $0.key }
-                    typeIDs = types.filter { groupIDs.contains($0.value["groupID"] as? Int ?? -1) }.map { $0.key }
-                } else if let typeName = target["type"] as? String,
-                          let types = data["types"] as? [Int: [String: Any]] {
-                    // type filter
-                    typeIDs = types.filter { $0.value["name"] as? String == typeName }.map { $0.key }
+                if let categoryName = target["category"] as? String {
+                    // Handle YAML data structure with string keys
+                    if let categories = data["categories"] as? [String: Any],
+                       let categoryEntry = categories.first(where: { _, value in
+                           (value as? [String: Any])?["name"] as? String == categoryName
+                       }),
+                       let categoryID = Int(categoryEntry.key),
+                       let groups = data["groups"] as? [String: Any],
+                       let types = data["types"] as? [String: Any] {
+                        // category filter
+                        let groupIDs = groups.compactMap { (key, value) -> Int? in
+                            guard let groupData = value as? [String: Any],
+                                  groupData["categoryID"] as? Int == categoryID,
+                                  let groupID = Int(key) else { return nil }
+                            return groupID
+                        }
+                        typeIDs = types.compactMap { (key, value) -> Int? in
+                            guard let typeData = value as? [String: Any],
+                                  let groupID = typeData["groupID"] as? Int,
+                                  groupIDs.contains(groupID),
+                                  let typeID = Int(key) else { return nil }
+                            return typeID
+                        }
+                    } else {
+                        throw TypeDogmaPatchError.unknownCategory(categoryName)
+                    }
+                } else if let typeName = target["type"] as? String {
+                    // type filter with YAML data structure
+                    if let types = data["types"] as? [String: Any] {
+                        typeIDs = types.compactMap { (key, value) -> Int? in
+                            guard let typeData = value as? [String: Any],
+                                  typeData["name"] as? String == typeName,
+                                  let typeID = Int(key) else { return nil }
+                            return typeID
+                        }
+                    } else {
+                        throw TypeDogmaPatchError.unknownType(typeName)
+                    }
                 } else {
                     throw TypeDogmaPatchError.unknownCategory(target["category"] as? String ?? "")
                 }

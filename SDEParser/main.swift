@@ -58,6 +58,23 @@ func processYAMLFiles(in directory: URL) {
     }
     enumerator.skipDescendants()
 
+    // Load all YAML data first for cross-references
+    var allYamlData: [String: Any] = [:]
+    print("🔄 Loading all YAML files for cross-references...")
+    
+    for fileURL in yamlFiles {
+        let baseName = fileURL.deletingPathExtension().lastPathComponent
+        do {
+            let yamlString = try String(contentsOf: fileURL, encoding: .utf8)
+            if let yamlData = try Yams.load(yaml: yamlString) {
+                allYamlData[baseName] = yamlData
+                print("📋 Pre-loaded \(baseName).yaml")
+            }
+        } catch {
+            print("⚠️ Failed to pre-load \(baseName).yaml: \(error)")
+        }
+    }
+
     let totalFiles = yamlFiles.count
     var completedFiles = 0
     let progressQueue = DispatchQueue(label: "progress.queue")
@@ -77,16 +94,13 @@ func processYAMLFiles(in directory: URL) {
             }
 
             do {
-                let yamlString = try String(contentsOf: fileURL, encoding: .utf8)
-                guard let yamlData = try Yams.load(yaml: yamlString) else {
-                    print("⚠️ Skipping: Failed to parse YAML at \(fileURL.path)")
+                let baseName = fileURL.deletingPathExtension().lastPathComponent
+                guard var finalData = allYamlData[baseName] else {
+                    print("⚠️ Skipping: No pre-loaded data for \(baseName)")
                     return
                 }
 
-                var finalData = yamlData
-
                 // Apply patches for dogma sections
-                let baseName = fileURL.deletingPathExtension().lastPathComponent
                 if baseName == "dogmaAttributes",
                    var dict = finalData as? [String: Any] {
                     var entries: [Int: [String: Any]] = Dictionary(uniqueKeysWithValues: dict.compactMap({ key, value in
@@ -126,7 +140,8 @@ func processYAMLFiles(in directory: URL) {
                     }))
                     do {
                         if let tdPatches = patches["typeDogma"] as? [[String: Any]] {
-                            try applyTypeDogmaPatches(to: &entries, using: tdPatches, data: ["typeDogma": dict])
+                            // Pass complete YAML data context for cross-references
+                            try applyTypeDogmaPatches(to: &entries, using: tdPatches, data: allYamlData)
                             print("✅ Successfully applied typeDogma patches for \(baseName)")
                         }
                         finalData = Dictionary(uniqueKeysWithValues: entries.map { (k, v) in ("\(k)", v) })
@@ -135,7 +150,7 @@ func processYAMLFiles(in directory: URL) {
                     }
                 }
 
-                if let dict = yamlData as? [String: Any],
+                if let dict = allYamlData[baseName] as? [String: Any],
                    dict.keys.allSatisfy({ Int($0) != nil }) {
                     let sortedDict = dict
                         .compactMap { (key, value) -> (Int, Any)? in
