@@ -241,6 +241,52 @@ func processYAMLFiles(in directory: URL) {
     }
 
     group.wait()
+    // Build a quick lookup index for type IDs <-> names
+    do {
+        if let typesData = allYamlData["types"] as? [String: Any] {
+            var byID: [String: String] = [:]        // "587": "Rifter"
+            var byName: [String: [Int]] = [:]       // "Rifter": [587]
+
+            for (typeIDStr, value) in typesData {
+                guard let typeID = Int(typeIDStr),
+                      let dict = value as? [String: Any] else { continue }
+
+                // Extract a readable (English) name if possible
+                var name: String? = nil
+                if let n = dict["name"] as? String { // some SDEs inline name as String
+                    name = n
+                } else if let nameDict = dict["name"] as? [String: Any] { // common: { en: "..." }
+                    if let en = nameDict["en"] as? String { name = en }
+                    else if let anyValue = nameDict.values.first as? String { name = anyValue }
+                }
+
+                guard let finalName = name, !finalName.isEmpty else { continue }
+
+                byID[typeIDStr] = finalName
+                byName[finalName, default: []].append(typeID)
+            }
+
+            // Sort arrays for determinism
+            for (k, v) in byName { byName[k] = v.sorted() }
+
+            let indexJSON: [String: Any] = [
+                "byID": byID,
+                "byName": byName
+            ]
+
+            let jsonDestinationRoot = resourcesRoot.appendingPathComponent("sde-json")
+            try fileManager.createDirectory(at: jsonDestinationRoot, withIntermediateDirectories: true)
+            let outputURL = jsonDestinationRoot.appendingPathComponent("typesIndex.json")
+            let data = try JSONSerialization.data(withJSONObject: indexJSON, options: [.prettyPrinted])
+            try data.write(to: outputURL)
+            print("🧭 Generated typesIndex.json (name ⇄ ID index)")
+        } else {
+            print("⚠️ Could not find 'types' data to build index.")
+        }
+    } catch {
+        print("⚠️ Failed to generate typesIndex.json: \(error)")
+    }
+
     print("🏁 All processing completed!")
     let elapsedTime = Date().timeIntervalSince(startTime)
     print(String(format: "⏱ Time elapsed: %.2f seconds", elapsedTime))
