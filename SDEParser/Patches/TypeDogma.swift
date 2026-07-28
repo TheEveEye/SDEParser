@@ -30,8 +30,8 @@ func fixupAttribute(_ attribute: inout [String: Any], data: [String: Any]) throw
     }
     
     if let dogmaAttrs = data["dogmaAttributes"] as? [String: Any] {
-        // Find attribute by name in YAML data structure (keys are strings)
-        if let (idStr, attrData) = dogmaAttrs.first(where: { _, value in
+        // Find the attribute by name in the string-keyed SDE dictionary
+        if let (idStr, _) = dogmaAttrs.first(where: { _, value in
             (value as? [String: Any])?["name"] as? String == name
         }), let id = Int(idStr) {
             attribute["attributeID"] = id
@@ -60,9 +60,9 @@ func fixupEffect(_ effect: inout [String: Any], data: [String: Any]) throws {
     }
     
     if let dogmaEffs = data["dogmaEffects"] as? [String: Any] {
-        // Find effect by name in YAML data structure (keys are strings)
-        if let (idStr, effData) = dogmaEffs.first(where: { _, value in
-            (value as? [String: Any])?["effectName"] as? String == name
+        // Find the effect by its current SDE name field.
+        if let (idStr, _) = dogmaEffs.first(where: { _, value in
+            (value as? [String: Any])?["name"] as? String == name
         }), let id = Int(idStr) {
             effect["effectID"] = id
             effect.removeValue(forKey: "effect")
@@ -106,7 +106,7 @@ func applyTypeDogmaPatches(
             for target in targets {
                 var typeIDs: [Int] = []
                 if let categoryName = target["category"] as? String {
-                    // Handle YAML data structure with string keys
+                    // Use the string-keyed SDE dictionaries
                     if let categories = data["categories"] as? [String: Any],
                        let groups = data["groups"] as? [String: Any],
                        let types = data["types"] as? [String: Any] {
@@ -149,7 +149,7 @@ func applyTypeDogmaPatches(
                         throw TypeDogmaPatchError.unknownCategory(categoryName)
                     }
                 } else if let typeName = target["type"] as? String {
-                    // type filter with YAML data structure
+                    // Filter types in the string-keyed SDE dictionary
                     if let types = data["types"] as? [String: Any] {
                         typeIDs = types.compactMap { (key, value) -> Int? in
                             guard let typeData = value as? [String: Any] else { return nil }
@@ -182,8 +182,7 @@ func applyTypeDogmaPatches(
                 }
 
                 // hasAllAttributes filter
-                if let hasAll = target["hasAllAttributes"] as? [[String: Any]],
-                   let _ = data["dogmaAttributes"] as? [Int: [String: Any]] {
+                if let hasAll = target["hasAllAttributes"] as? [[String: Any]] {
                     var filteredIDs: [Int] = []
                     for var attrPrereq in hasAll {
                         try fixupAttribute(&attrPrereq, data: data)

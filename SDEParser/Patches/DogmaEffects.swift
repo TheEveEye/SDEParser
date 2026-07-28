@@ -31,8 +31,8 @@ func fixupModifierInfo(_ modifier: inout [String: Any], data: [String: Any]) thr
     // Resolve modifiedAttribute -> modifiedAttributeID
     if let name = modifier["modifiedAttribute"] as? String {
         if let dogmaAttrs = data["dogmaAttributes"] as? [String: Any] {
-            // Find attribute by name in YAML data structure (keys are strings)
-            if let (idStr, attrData) = dogmaAttrs.first(where: { _, value in
+            // Find the attribute by name in the string-keyed SDE dictionary
+            if let (idStr, _) = dogmaAttrs.first(where: { _, value in
                 (value as? [String: Any])?["name"] as? String == name
             }), let id = Int(idStr) {
                 modifier["modifiedAttributeID"] = id
@@ -47,8 +47,8 @@ func fixupModifierInfo(_ modifier: inout [String: Any], data: [String: Any]) thr
     // Resolve modifyingAttribute -> modifyingAttributeID
     if let name = modifier["modifyingAttribute"] as? String {
         if let dogmaAttrs = data["dogmaAttributes"] as? [String: Any] {
-            // Find attribute by name in YAML data structure (keys are strings)
-            if let (idStr, attrData) = dogmaAttrs.first(where: { _, value in
+            // Find the attribute by name in the string-keyed SDE dictionary
+            if let (idStr, _) = dogmaAttrs.first(where: { _, value in
                 (value as? [String: Any])?["name"] as? String == name
             }), let id = Int(idStr) {
                 modifier["modifyingAttributeID"] = id
@@ -66,9 +66,9 @@ func fixupModifierInfo(_ modifier: inout [String: Any], data: [String: Any]) thr
             modifier["skillTypeID"] = -1
         } else {
             if let types = data["types"] as? [String: Any] {
-                // Find type by name in YAML data structure (keys are strings)
+                // Find the type by name in the string-keyed SDE dictionary
                 // Check both direct name field and name.en field
-                if let (idStr, typeData) = types.first(where: { _, value in
+                if let (idStr, _) = types.first(where: { _, value in
                     guard let typeInfo = value as? [String: Any] else { return false }
                     // Check direct name field
                     if let name = typeInfo["name"] as? String, name == skill {
@@ -102,7 +102,7 @@ func fixupModifierInfo(_ modifier: inout [String: Any], data: [String: Any]) thr
 /// - Parameters:
 ///   - entries: A mapping from effect IDs to entry dictionaries.
 ///   - patches: An array of patch dictionaries.
-///   - data: The full YAML data context (includes "dogmaAttributes", "types", etc. with string keys).
+///   - data: The full SDE data context (includes "dogmaAttributes", "types", etc. with string keys).
 /// - Throws: Various errors if lookups fail or effect names collide.
 func applyDogmaEffectPatches(
     to entries: inout [Int: [String: Any]],
@@ -111,10 +111,13 @@ func applyDogmaEffectPatches(
 ) throws {
     var nextEffectID = -1
     for var patch in patches {
-        // Convert effectCategory name to ID
-        if let catName = patch["effectCategory"] as? String,
-           let catId = effectCategoryNameToId[catName] {
-            patch["effectCategory"] = catId
+        // Patch files use readable category names; generated data keeps the
+        // current SDE field name.
+        let categoryName = patch["effectCategoryID"] as? String
+            ?? patch["effectCategory"] as? String
+        if let categoryName, let categoryID = effectCategoryNameToId[categoryName] {
+            patch["effectCategoryID"] = categoryID
+            patch.removeValue(forKey: "effectCategory")
         }
 
         // Fix up any nested modifierInfo
@@ -127,23 +130,17 @@ func applyDogmaEffectPatches(
 
         // Handle new entries
         if let newInfo = patch["new"] as? [String: Any] {
-            // Set the effectName
             if let newName = newInfo["name"] as? String {
-                patch["effectName"] = newName
+                patch["name"] = newName
             }
-            // Determine ID
-            let id: Int
-            if let explicit = newInfo["id"] as? Int {
-                id = explicit
-            } else {
-                id = nextEffectID
-            }
+
+            let id = newInfo["id"] as? Int ?? nextEffectID
             patch.removeValue(forKey: "new")
-            // Ensure unique name
+
             for entry in entries.values {
-                if let existing = entry["effectName"] as? String,
-                   existing == (patch["effectName"] as? String ?? "") {
-                    throw DogmaEffectsPatchError.duplicateEffectName(existing)
+                if let existingName = entry["name"] as? String,
+                   existingName == (patch["name"] as? String ?? "") {
+                    throw DogmaEffectsPatchError.duplicateEffectName(existingName)
                 }
             }
             entries[id] = patch
@@ -154,7 +151,7 @@ func applyDogmaEffectPatches(
         if let targets = patch["patch"] as? [[String: Any]] {
             let names = targets.compactMap { $0["name"] as? String }
             let effectIDs = entries.compactMap { (key, entry) -> Int? in
-                if let name = entry["effectName"] as? String, names.contains(name) {
+                if let name = entry["name"] as? String, names.contains(name) {
                     return key
                 }
                 return nil
