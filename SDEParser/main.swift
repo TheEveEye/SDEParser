@@ -524,6 +524,113 @@ func writeTypeIndex(from allSDEData: [String: Any]) throws {
     )
 }
 
+func writeShipTypes(from allSDEData: [String: Any]) throws {
+    let types = try objectEntries(in: allSDEData, named: "types")
+    let groups = try objectEntries(in: allSDEData, named: "groups")
+
+    let shipTypes = types.compactMap { typeID, type -> [String: Any]? in
+        guard type["published"] as? Bool == true,
+              let groupID = type["groupID"] as? Int,
+              let group = groups[groupID],
+              group["categoryID"] as? Int == 6,
+              let localizedName = type["name"] as? [String: Any],
+              let name = localizedName["en"] as? String else {
+            return nil
+        }
+
+        var shipType: [String: Any] = [
+            "typeID": typeID,
+            "name": name,
+            "groupID": groupID,
+        ]
+        if let marketGroupID = type["marketGroupID"] as? Int {
+            shipType["marketGroupID"] = marketGroupID
+        }
+        if let factionID = type["factionID"] as? Int {
+            shipType["factionID"] = factionID
+        }
+        return shipType
+    }
+    .sorted {
+        ($0["typeID"] as? Int ?? 0) < ($1["typeID"] as? Int ?? 0)
+    }
+
+    try writeJSON(
+        shipTypes,
+        to: jsonDestinationRoot.appendingPathComponent("shipTypes.json")
+    )
+    try writeJSON(
+        shipTypes,
+        to: appSDEDestinationRoot.appendingPathComponent("shipTypes.json")
+    )
+}
+
+func writeModuleTypes(from allSDEData: [String: Any]) throws {
+    let types = try objectEntries(in: allSDEData, named: "types")
+    let marketGroups = try objectEntries(in: allSDEData, named: "marketGroups")
+    let typeDogma = try objectEntries(in: allSDEData, named: "typeDogma")
+    let moduleMarketRootIDs: Set<Int> = [9, 955]
+
+    func descendsFromModuleMarketRoot(_ marketGroupID: Int) -> Bool {
+        var currentID = marketGroupID
+        var visited = Set<Int>()
+
+        while visited.insert(currentID).inserted {
+            guard !moduleMarketRootIDs.contains(currentID) else { return true }
+            guard let parentID = marketGroups[currentID]?["parentGroupID"] as? Int else {
+                return false
+            }
+            currentID = parentID
+        }
+
+        return false
+    }
+
+    func fittingSlot(for typeID: Int) -> String? {
+        guard let effects = typeDogma[typeID]?["dogmaEffects"] as? [[String: Any]] else {
+            return nil
+        }
+        let effectIDs = Set(effects.compactMap { $0["effectID"] as? Int })
+
+        if effectIDs.contains(12) { return "high" }
+        if effectIDs.contains(13) { return "medium" }
+        if effectIDs.contains(11) { return "low" }
+        if effectIDs.contains(2_663) { return "rig" }
+        if effectIDs.contains(3_772) { return "subsystem" }
+        return nil
+    }
+
+    let moduleTypes = types.compactMap { typeID, type -> [String: Any]? in
+        guard type["published"] as? Bool == true,
+              let marketGroupID = type["marketGroupID"] as? Int,
+              descendsFromModuleMarketRoot(marketGroupID),
+              let slot = fittingSlot(for: typeID),
+              let localizedName = type["name"] as? [String: Any],
+              let name = localizedName["en"] as? String else {
+            return nil
+        }
+
+        return [
+            "typeID": typeID,
+            "name": name,
+            "marketGroupID": marketGroupID,
+            "slot": slot,
+        ]
+    }
+    .sorted {
+        ($0["typeID"] as? Int ?? 0) < ($1["typeID"] as? Int ?? 0)
+    }
+
+    try writeJSON(
+        moduleTypes,
+        to: jsonDestinationRoot.appendingPathComponent("moduleTypes.json")
+    )
+    try writeJSON(
+        moduleTypes,
+        to: appSDEDestinationRoot.appendingPathComponent("moduleTypes.json")
+    )
+}
+
 @MainActor
 func processSDE() async throws {
     let startTime = Date()
@@ -555,6 +662,10 @@ func processSDE() async throws {
 
     try writeTypeIndex(from: allSDEData)
     print("🧭 Generated typesIndex.json")
+    try writeShipTypes(from: allSDEData)
+    print("🚀 Generated shipTypes.json")
+    try writeModuleTypes(from: allSDEData)
+    print("🧩 Generated moduleTypes.json")
     print(String(format: "🏁 Completed in %.2f seconds", Date().timeIntervalSince(startTime)))
 }
 
